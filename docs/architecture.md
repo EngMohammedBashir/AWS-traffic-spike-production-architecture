@@ -2,7 +2,7 @@
 
 This document explains the infrastructure as it is actually implemented and verified. It focuses on **what was built, why each component exists, how traffic flows, the security reasoning, and the evidence used to validate the design**.
 
-> The repository intentionally distinguishes the current implementation from the larger target architecture. Services are documented as implemented only after they are actually built and verified.
+> The repository intentionally distinguishes **Configured** from **Verified**. A resource can be successfully created and configured without its runtime behavior having been proven yet.
 
 ## 1. Current Architecture
 
@@ -19,12 +19,14 @@ web-alb (public subnets, ALB-SG)
 web-tg (HTTP/80)
    |
    v
-Private EC2 application tier (App-SG)
+web-asg
    |
-   +--> NAT Gateway for outbound Internet access
+   +--> EC2 instances in private-subnet-a / private-subnet-b (App-SG)
+             |
+             +--> NAT Gateway for outbound Internet access
 ```
 
-The public entry point and private application tier are intentionally separated. The next phase introduces a reusable Launch Template and Auto Scaling Group so instances can be created consistently and later scaled across private subnets.
+The public entry point and private application tier are intentionally separated. The ALB accepts Internet traffic while Auto Scaling-managed EC2 application instances remain in private subnets.
 
 ## 2. VPC and Subnet Design
 
@@ -106,7 +108,7 @@ Web server is running successfully.
 Hostname: ip-10-0-16-137.ec2.internal
 ```
 
-This validated the complete path:
+This validated the original complete path:
 
 ```text
 Browser -> web-alb -> web-tg -> App-SG -> private web-server -> Apache
@@ -118,9 +120,9 @@ An earlier HTTPS attempt was refused because HTTPS/443 is not configured on the 
 
 ## 9. Launch Template — Repeatable Server Definition
 
-The application tier is now being converted from a manually launched EC2 instance into a repeatable server definition for Auto Scaling.
+The application tier now has a reusable Launch Template for Auto Scaling.
 
-Current Launch Template configuration:
+Configured Launch Template:
 
 - Name: `web-launch-template`
 - AMI: Amazon Linux 2023 x86_64
@@ -167,111 +169,289 @@ EOF
 
 ### What each part does
 
-#### `#!/bin/bash`
-
-Tells the instance to execute the bootstrap script with Bash.
-
-#### `dnf update -y`
-
-Updates available package metadata/packages without requiring interactive confirmation. The `-y` matters because Auto Scaling launches must complete without a human answering prompts.
-
-#### `dnf install -y httpd`
-
-Installs Apache HTTP Server. A newly launched Amazon Linux instance does not automatically contain our running web application, so the bootstrap process prepares the web-server software.
-
-#### `systemctl enable httpd`
-
-Configures Apache to start automatically on future boots.
-
-#### `systemctl start httpd`
-
-Starts Apache immediately during the initial bootstrap so the instance can begin serving HTTP and eventually pass the target-group health check.
-
-#### `HOSTNAME=$(hostname)`
-
-Reads the unique hostname of the current EC2 instance and stores it in a shell variable.
-
-This is especially useful for the Auto Scaling phase. When multiple EC2 instances exist behind the ALB, the page can reveal which backend generated a particular response.
-
-#### `cat > /var/www/html/index.html <<EOF ... EOF`
-
-Creates the web application's simple HTML landing page in Apache's document root. The generated page confirms that the server is running and prints its hostname.
+- `#!/bin/bash` — executes the bootstrap script with Bash.
+- `dnf update -y` — updates packages without interactive confirmation.
+- `dnf install -y httpd` — installs Apache HTTP Server.
+- `systemctl enable httpd` — makes Apache start automatically on future boots.
+- `systemctl start httpd` — starts Apache immediately.
+- `HOSTNAME=$(hostname)` — captures the unique EC2 hostname, useful for identifying which backend served a request.
+- `cat > /var/www/html/index.html <<EOF ... EOF` — creates the simple application page in Apache's document root.
 
 ### Why User Data matters for Auto Scaling
 
-Without bootstrap automation, an Auto Scaling Group could successfully create a new EC2 instance that is technically `Running` but has no Apache service or application page. The ALB health check would then fail and the new capacity would not actually serve users.
-
-User data turns a generic AMI into an application-ready server automatically:
+Without bootstrap automation, Auto Scaling could launch a technically running EC2 instance that has no Apache service or application page. The target-group health check would fail and that capacity would not serve users.
 
 ```text
-Auto Scaling decides capacity is needed
-              |
-              v
-Launch Template creates EC2
-              |
-              v
-User Data runs automatically
-              |
-      +-------+--------+
-      |                |
-      v                v
-Install Apache     Create web page
-      |                |
-      +-------+--------+
-              |
-              v
-Start HTTP service on port 80
-              |
-              v
-Target Group health check
-              |
-              v
-Healthy target can receive ALB traffic
+ASG needs capacity
+      |
+      v
+Launch Template -> EC2
+      |
+      v
+User Data
+      |
+      +--> Install/start Apache
+      +--> Create application page
+      |
+      v
+web-tg health check
+      |
+      v
+Healthy target -> ALB traffic
 ```
 
-### Why not configure the server manually?
+Manual configuration does not scale. User data makes each instance repeatable, automatic, and disposable.
 
-Manual configuration does not scale. If five replacement instances were launched during a traffic spike, manually logging into each server to install and configure Apache would defeat the purpose of Auto Scaling.
-
-The bootstrap script makes instance creation **repeatable, automatic, and disposable**: any instance can be terminated and recreated from the same definition.
-
-### Important Base64 detail
-
-The AWS console offers an option indicating that user data has **already been Base64 encoded**. This option was intentionally left disabled because the content entered here is plain Bash text. AWS handles the required encoding when the Launch Template is created.
-
-Marking plain Bash as already encoded could prevent cloud-init from receiving the intended script correctly, causing new instances to launch without the expected application bootstrap.
-
-### Verification plan
-
-The Launch Template is not considered fully validated merely because AWS accepts its configuration. After the Auto Scaling Group creates an instance, verification will include:
-
-1. EC2 reaches the running/healthy infrastructure state.
-2. Apache is started by user data.
-3. The new instance registers with `web-tg`.
-4. Target health becomes `Healthy`.
-5. Requests through `web-alb` successfully reach Auto Scaling-managed instances.
-6. Hostname output demonstrates which backend handled a request.
-
-This separates **configuration created** from **behavior verified**, which is important for credible engineering documentation.
+The AWS console option indicating user data is already Base64 encoded was intentionally left disabled because the supplied content is plain Bash; AWS performs the required encoding.
 
 ---
 
-## 11. Current Verified State
+## 11. Auto Scaling Group — `web-asg`
 
-Verified so far:
+**Status: Configured. Runtime scaling behavior is not yet documented as Verified.**
+
+Configured values:
+
+- Auto Scaling Group: `web-asg`
+- Launch Template: `web-launch-template`
+- AMI: Amazon Linux 2023
+- Instance type: `t3.micro`
+- Security group inherited from Launch Template: `App-SG`
+- Availability Zones: `us-east-1a` and `us-east-1b`
+- Subnets:
+  - `private-subnet-a` — `us-east-1a`
+  - `private-subnet-b` — `us-east-1b`
+- Availability Zone distribution: Balanced best effort
+- Desired capacity: `2`
+- Minimum capacity: `2`
+- Maximum capacity: `4`
+- Load balancer: `web-alb`
+- Target group: `web-tg`
+- Health checks: `EC2, ELB`
+- Health check grace period: `300 seconds`
+- Tag propagated to new instances: `Project = AWS-Traffic-Spike`
+
+The group reached **At desired capacity** with two instances reported healthy at the infrastructure level. This proves the ASG can maintain its configured baseline capacity. It does **not** by itself prove the complete scale-out/scale-in experiment, which remains pending.
+
+### Why private subnets?
+
+The application servers do not need direct Internet exposure. The ALB acts as the controlled public front door, while application instances live behind it.
+
+```text
+Internet -> ALB -> Target Group -> ASG -> Private EC2
+```
+
+This is similar to a company reception desk: visitors enter through reception rather than walking directly into internal offices.
+
+### Why Desired 2, Min 2, Max 4?
+
+`Min = 2` keeps two application instances as the baseline, improving availability across two Availability Zones. `Desired = 2` starts the system at that baseline. `Max = 4` gives the project enough headroom to demonstrate scale-out without allowing an uncontrolled number of instances to launch during testing.
+
+```text
+Normal baseline: 2 instances
+Traffic rises:   2 -> 3 -> 4
+Upper guardrail: 4 instances
+Traffic falls:   4 -> 3 -> 2
+Lower guardrail: 2 instances
+```
+
+For this lab, the `2 -> 4` range is deliberately small: large enough to demonstrate elasticity, but bounded for cost control.
+
+### Health checks
+
+`EC2` health checks detect infrastructure-level instance problems. `ELB` health checks allow Auto Scaling to consider whether instances attached to the load-balancing path are healthy.
+
+The grace period is `300 seconds`, giving a newly launched instance time to boot, execute user data, install/start Apache, and become ready before health-check failures are acted upon.
+
+### Why EBS health checks are not enabled here?
+
+EBS health checks are not required to demonstrate the core application Auto Scaling behavior in this project. The key signals for this architecture are whether the EC2 instance is operational and whether the load-balancing application path considers it healthy. Additional storage-health integration can be introduced when the workload has storage-specific recovery requirements.
+
+---
+
+## 12. Dynamic Scaling Policy — `cpu-target-tracking`
+
+**Status: Configured. Scale-out and scale-in behavior still requires load-test verification.**
+
+The initial policy creation attempt occurred immediately after creation of the Auto Scaling service-linked role and failed while IAM role propagation was still completing. After the role became available, the policy was created successfully.
+
+Configured policy:
+
+- Policy type: Target tracking scaling
+- Policy name: `cpu-target-tracking`
+- Metric: Average CPU utilization
+- Target: `50%`
+- Instance warmup: `300 seconds`
+- Scale-in: Enabled
+
+### Target Tracking as a thermostat
+
+Target Tracking behaves like a **thermostat**.
+
+A thermostat does not simply say "turn cooling on once." It continuously compares the current temperature with the desired temperature and adjusts the system to stay near the target.
+
+The scaling policy follows the same idea:
+
+```text
+Average CPU > target
+        |
+        v
+Need more capacity
+        |
+        v
+Scale Out 📈
+
+Average CPU returns toward 50%
+        |
+        v
+Maintain appropriate capacity
+
+Demand falls
+        |
+        v
+Scale In 📉
+```
+
+### Why CPU at 50%?
+
+For this demonstration, `50%` gives the scaling system meaningful headroom before instances become heavily saturated. It also makes it practical to generate enough CPU load during the experiment to trigger a scale-out event.
+
+This is a lab design choice, not a universal production value. A production target should be selected from application behavior, latency objectives, workload characteristics, and measured capacity.
+
+### Instance warmup = 300 seconds
+
+New instances need time to become useful. During bootstrap they are installing packages, starting Apache, and entering the target group. The `300`-second warmup prevents fresh-instance CPU metrics from immediately distorting the group's scaling decisions while initialization is still underway.
+
+### Scale-in enabled
+
+Scale-in is enabled so the experiment can demonstrate both halves of elasticity:
+
+```text
+CPU ↑ -> Scale Out
+CPU ↓ -> Scale In
+```
+
+The expected floor remains `2` because the ASG minimum capacity is two instances.
+
+---
+
+## 13. Notifications and Tags
+
+### SNS notifications
+
+SNS notifications were intentionally skipped at this stage. Notifications can be useful operationally, but they are not required to prove that the ASG can launch capacity, attach instances to the target group, and react to load.
+
+### Project tag
+
+```text
+Project = AWS-Traffic-Spike
+```
+
+The tag is configured to propagate to newly launched instances. This improves resource identification and supports later filtering, inventory, and cost analysis.
+
+---
+
+## 14. Verification Plan — Pending Runtime Test
+
+Creating the ASG and scaling policy proves **configuration**, not complete runtime behavior.
+
+The remaining verification chain is:
+
+```text
+ASG
+ |
+ v
+EC2 instances launched
+ |
+ v
+User Data executes
+ |
+ v
+Apache starts
+ |
+ v
+web-tg reports targets Healthy
+ |
+ v
+web-alb serves the application
+ |
+ v
+Generate load
+ |
+ v
+CPU rises above target
+ |
+ v
+Scale Out
+ |
+ v
+Remove load
+ |
+ v
+CPU falls
+ |
+ v
+Scale In
+```
+
+Or, compactly:
+
+```text
+ASG -> EC2 -> User Data -> Apache -> web-tg Healthy -> ALB -> Load Test -> Scale Out -> Scale In
+```
+
+Evidence to capture during verification:
+
+1. ASG instance count at the baseline of `2`.
+2. Both ASG-created targets becoming `Healthy` in `web-tg`.
+3. Successful HTTP requests through `web-alb`.
+4. Hostname responses showing traffic reaching Auto Scaling-managed backends.
+5. CPU metric rising during the load test.
+6. ASG Activity showing scale-out and creation of additional instance capacity.
+7. Desired/actual capacity increasing above `2` without exceeding `4`.
+8. CPU falling after load is removed.
+9. ASG Activity showing scale-in.
+10. Capacity returning to the minimum/baseline of `2`.
+
+**Do not mark Auto Scaling as Verified until this chain has actually been observed.**
+
+---
+
+## 15. Current Project State
+
+### Verified
 
 - Custom VPC and public/private subnet layout
 - Internet Gateway and NAT-based private outbound connectivity
 - `ALB-SG -> App-SG` security boundary
 - Private EC2 without public IPv4
 - Apache application bootstrap on the original server
-- `web-tg` target health: `Healthy`
+- `web-tg` target health on the original application path: `Healthy`
 - `web-alb`: `Active`
 - External browser request through the ALB: successful
 
-In progress:
+### Configured
 
 - `web-launch-template`
-- Auto Scaling application tier
+- `web-asg`
+- ASG baseline: Desired `2`, Min `2`, Max `4`
+- ASG placement across `private-subnet-a` and `private-subnet-b`
+- `web-asg -> web-tg -> web-alb` integration
+- EC2 + ELB health checks with 300-second grace period
+- `cpu-target-tracking`
+- Average CPU target: `50%`
+- Instance warmup: `300 seconds`
+- Scale-in enabled
+- `Project = AWS-Traffic-Spike` tag propagation
 
-The next milestone is to create the Launch Template successfully, then create an Auto Scaling Group using the private subnets and integrate it with `web-tg`.
+### Pending verification
+
+- ASG-created application targets confirmed `Healthy` in `web-tg`
+- Application response through ALB specifically from ASG-created instances
+- CPU load test
+- Automatic scale-out from baseline capacity
+- New scaled-out instances becoming healthy and serving traffic
+- Automatic scale-in after load removal
+- Return to minimum capacity of `2`
+
+The next milestone is the controlled runtime verification of the Auto Scaling behavior. Once that test succeeds, this document should be updated with the actual observed timestamps, capacity changes, target health, and screenshots/evidence rather than merely expected behavior.
