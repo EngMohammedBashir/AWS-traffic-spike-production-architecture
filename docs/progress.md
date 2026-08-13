@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**Phase 3 — Load Balancing (in progress)**
+**Phase 4 — Auto Scaling Preparation (in progress)**
 
 - [x] Repository created
 - [x] Project README initialized
@@ -17,117 +17,112 @@
 - [x] Private subnet A: `10.0.16.0/21` — `us-east-1a`
 - [x] Private subnet B: `10.0.24.0/21` — `us-east-1b`
 - [x] Internet Gateway created and attached to `main-vpc`
-- [x] Public route table created and public subnets associated
-- [x] Private route table created and private subnets associated
-- [x] NAT Gateway created and private default route configured
-- [x] ALB security group (`ALB-SG`) created
-- [x] Application security group (`App-SG`) created; HTTP/80 allowed from `ALB-SG` only
-- [x] Corrected EC2 public-IP misconfiguration by recreating `web-server` privately
-- [x] `web-server` running in `private-subnet-a` with no public IPv4 and `App-SG`
+- [x] Public and private route tables configured
+- [x] NAT Gateway created and private outbound route configured
+- [x] `ALB-SG` and `App-SG` created with layered ingress
+- [x] `web-server` launched privately with no public IPv4
 - [x] EC2 status checks passed
-- [x] Target group `web-tg` created
-- [x] Target type: Instance, HTTP:80, HTTP1, VPC `main-vpc`
-- [x] Health check: HTTP `/`, traffic port, success code 200
-- [x] `web-server` registered in `web-tg` on port 80
-- [x] Application Load Balancer `web-alb` created
-- [x] `web-alb` is internet-facing and IPv4
-- [x] `web-alb` spans `public-subnet-a` (`us-east-1a`) and `public-subnet-b` (`us-east-1b`)
-- [x] `web-alb` uses `ALB-SG`
-- [x] Listener HTTP:80 forwards 100% to `web-tg`
-- [ ] Wait for ALB state to become `Active`
-- [ ] Verify target health becomes `Healthy`
-- [ ] Test application through ALB DNS name
+- [x] `web-tg` created and `web-server` registered on HTTP/80
+- [x] `web-alb` created across both public subnets
+- [x] HTTP:80 listener forwards 100% to `web-tg`
+- [x] `web-alb` reached `Active`
+- [x] `web-server` reached `Healthy` in `web-tg`
+- [x] End-to-end HTTP browser test through ALB succeeded
+- [x] Launch Template created: `web-launch-template`
+- [x] Launch Template version: `1` (default/latest)
+- [x] AMI: Amazon Linux 2023 x86_64
+- [x] Instance type: `t3.micro`
+- [x] Key pair: `Web-Key`
+- [x] Security group: `App-SG`
+- [x] Subnet intentionally omitted from Launch Template for ASG placement control
+- [x] User data included to install/start Apache and generate hostname test page
+- [x] Plain Bash user data used; pre-Base64-encoded option left disabled
+- [ ] Create Auto Scaling Group using both private subnets
+- [ ] Attach Auto Scaling Group to `web-tg`
+- [ ] Verify ASG-created instances bootstrap and become Healthy
+- [ ] Test scaling/replacement behavior
 
 ## Current Architecture
 
 ```text
 Internet
-   │
-   ▼
+   |
+   v
 web-alb (internet-facing)
    ├── public-subnet-a / us-east-1a
    └── public-subnet-b / us-east-1b
-   │
-   ▼
+   |
+   v
 ALB-SG
-   │ HTTP:80
-   ▼
+   |
+   v
 web-tg
-   │
-   ▼
+   |
+   v
 App-SG
-   │ HTTP:80 from ALB-SG only
-   ▼
-web-server
-   └── private-subnet-a / us-east-1a
+   |
+   v
+Private application instances
+   ^
+   |
+web-launch-template
+   |
+   +--> future Auto Scaling Group across private-subnet-a + private-subnet-b
 ```
 
-## Current Network Layout
+## Verified End-to-End Result
+
+External HTTP request through the ALB returned:
 
 ```text
-main-vpc — 10.0.0.0/16
-│
-├── us-east-1a
-│   ├── public-subnet-a   10.0.0.0/21
-│   └── private-subnet-a  10.0.16.0/21
-│        └── web-server   private-only EC2
-│
-└── us-east-1b
-    ├── public-subnet-b   10.0.8.0/21
-    └── private-subnet-b  10.0.24.0/21
-
-Public route table:
-  0.0.0.0/0 -> Internet Gateway
-
-Private route table:
-  0.0.0.0/0 -> NAT Gateway
+AWS Traffic Spike Project
+Web server is running successfully.
+Hostname: ip-10-0-16-137.ec2.internal
 ```
 
-## Security Design
+This verified the complete path:
 
 ```text
-Internet
-   ↓
-ALB-SG
-   ├── TCP/80  from 0.0.0.0/0
-   └── TCP/443 from 0.0.0.0/0
-   ↓
-App-SG
-   └── TCP/80 from ALB-SG only
-   ↓
-private EC2
+Browser -> web-alb -> web-tg -> App-SG -> private EC2 -> Apache
 ```
 
-This keeps the application instance from accepting direct Internet web traffic. The ALB is the public entry point.
+The initial HTTPS attempt failed because HTTPS/443 is not configured on the ALB yet; repeating the request over the configured HTTP/80 listener succeeded.
 
-## EC2 Implementation
+## Launch Template Details
 
-Current successful instance configuration:
+`web-launch-template` is the reusable server definition for the next Auto Scaling phase.
 
-- Name: `web-server`
-- AMI: Amazon Linux 2023
+Configuration:
+
+- AMI: Amazon Linux 2023 x86_64
 - Instance type: `t3.micro`
-- VPC: `main-vpc`
-- Subnet: `private-subnet-a`
-- Public IPv4: none
-- Security Group: `App-SG`
 - Key pair: `Web-Key`
-- User data installs/enables/starts Apache (`httpd`) and writes a simple test page with the instance hostname
-- Status checks: passed
+- Security group: `App-SG`
+- Subnet: omitted intentionally
+- User data: automated Apache bootstrap
 
-### Learning Incident — Public IP Misconfiguration
+Subnet placement is intentionally controlled by the Auto Scaling Group so the same template can launch instances into multiple private subnets/AZs.
 
-The first EC2 launch accidentally received an auto-assigned public IPv4 address even though it was placed in the private application subnet. The instance was terminated and recreated with public IP assignment disabled.
+## User Data Purpose
 
-**Lesson:** A subnet being named or routed as private is not enough by itself. Public IPv4 assignment must also be disabled for the application instance, and ingress should be restricted with a dedicated application security group.
+The bootstrap script automatically:
+
+1. Updates packages.
+2. Installs Apache (`httpd`).
+3. Enables Apache for future boots.
+4. Starts Apache immediately.
+5. Reads the instance hostname.
+6. Creates `/var/www/html/index.html` with a simple project page and hostname.
+
+This matters because an Auto Scaling Group must be able to launch usable application instances without manual login/configuration. A newly created EC2 instance should become application-ready and eventually pass the target-group health check automatically.
 
 ## Cost Warning
 
-The NAT Gateway is active and billable. The Application Load Balancer is also now provisioned and billable. Both must be tracked and deleted during cleanup when the lab no longer needs them. Actual AWS billing data will be used later for cost documentation.
+NAT Gateway and Application Load Balancer are active billable resources. Auto Scaling will also create additional EC2/EBS usage once enabled. Cleanup remains mandatory after testing, and actual AWS billing data will be documented rather than estimated as observed fact.
 
 ## Documentation Evidence
 
-AWS Console screenshots have been captured locally for VPC/subnets, Internet Gateway, route tables, NAT routing, security groups, EC2 correction, target group creation, and ALB creation/provisioning. Screenshot files are not yet committed to GitHub.
+Screenshots have been captured locally for key networking, EC2, target-group, ALB, end-to-end browser, and Launch Template milestones. Screenshot files are not yet committed to GitHub.
 
 ## Rules
 
@@ -152,29 +147,25 @@ AWS Console screenshots have been captured locally for VPC/subnets, Internet Gat
 - Created safe daily IAM administrative access.
 
 ### Session 2 — VPC & Subnets
-- Created `main-vpc` (`10.0.0.0/16`).
-- Created two public and two private subnets across two Availability Zones.
+- Created `main-vpc` and four subnets across two Availability Zones.
 
 ### Session 3 — Routing, NAT & Security
-- Created and attached the Internet Gateway.
-- Created public/private route tables and explicit subnet associations.
-- Routed public Internet traffic through the Internet Gateway.
-- Created a NAT Gateway and routed private outbound traffic through it.
-- Created `ALB-SG` and `App-SG` with layered ingress.
+- Created IGW, route tables, NAT Gateway, `ALB-SG`, and `App-SG`.
 
 ### Session 4 — EC2 Bootstrap
-- Prepared Amazon Linux 2023 Apache user data.
-- First EC2 launch exposed an unintended public IPv4; instance terminated.
-- Re-launched `web-server` in `private-subnet-a` with no public IPv4 and `App-SG`.
-- Verified the replacement instance is Running and all status checks passed.
+- Corrected first-launch public-IP mistake.
+- Re-launched `web-server` privately and verified status checks.
 
 ### Session 5 — Target Group & ALB
-- Created `web-tg` using instance targets on HTTP port 80.
-- Registered `web-server` in the target group.
-- Created internet-facing `web-alb` across the two public subnets.
-- Attached `ALB-SG` and configured HTTP:80 listener to forward to `web-tg`.
-- ALB was still `Provisioning` immediately after creation, which is expected.
+- Created `web-tg` and internet-facing `web-alb`.
+- Verified ALB `Active`, target `Healthy`, and successful browser response over HTTP.
+
+### Session 6 — Launch Template
+- Created `web-launch-template` version 1.
+- Reused Amazon Linux 2023, `t3.micro`, `Web-Key`, and `App-SG`.
+- Intentionally omitted subnet placement for ASG control.
+- Added automated Apache user data and documented why the Base64 pre-encoded option remains disabled for plain Bash input.
 
 ## Next Verified Step
 
-Wait for `web-alb` to become `Active`, then open `web-tg` and verify `web-server` target health. If the target becomes `Healthy`, test the application through the ALB DNS name and capture the result.
+Create an Auto Scaling Group from `web-launch-template`, place it across `private-subnet-a` and `private-subnet-b`, attach it to `web-tg`, and verify that ASG-created instances bootstrap automatically and become healthy targets.
