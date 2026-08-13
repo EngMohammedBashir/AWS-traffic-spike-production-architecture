@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**Phase 4 — Auto Scaling Preparation (in progress)**
+**Phase 7 — Final application rollout and project hardening (in progress)**
 
 - [x] Repository created
 - [x] Project README initialized
@@ -20,27 +20,48 @@
 - [x] Public and private route tables configured
 - [x] NAT Gateway created and private outbound route configured
 - [x] `ALB-SG` and `App-SG` created with layered ingress
-- [x] `web-server` launched privately with no public IPv4
-- [x] EC2 status checks passed
-- [x] `web-tg` created and `web-server` registered on HTTP/80
+- [x] Private EC2 application tier verified without public IPv4
+- [x] `web-tg` created on HTTP/80
 - [x] `web-alb` created across both public subnets
-- [x] HTTP:80 listener forwards 100% to `web-tg`
-- [x] `web-alb` reached `Active`
-- [x] `web-server` reached `Healthy` in `web-tg`
-- [x] End-to-end HTTP browser test through ALB succeeded
-- [x] Launch Template created: `web-launch-template`
-- [x] Launch Template version: `1` (default/latest)
-- [x] AMI: Amazon Linux 2023 x86_64
-- [x] Instance type: `t3.micro`
-- [x] Key pair: `Web-Key`
-- [x] Security group: `App-SG`
-- [x] Subnet intentionally omitted from Launch Template for ASG placement control
-- [x] User data included to install/start Apache and generate hostname test page
-- [x] Plain Bash user data used; pre-Base64-encoded option left disabled
-- [ ] Create Auto Scaling Group using both private subnets
-- [ ] Attach Auto Scaling Group to `web-tg`
-- [ ] Verify ASG-created instances bootstrap and become Healthy
-- [ ] Test scaling/replacement behavior
+- [x] HTTP:80 listener forwards to `web-tg`
+- [x] ALB browser test succeeded
+- [x] Launch Template v1 created with Apache bootstrap
+- [x] Auto Scaling Group `web-asg` created across both private subnets
+- [x] ASG attached to `web-tg`
+- [x] Baseline capacity configured: Desired `2`, Min `2`, Max `4`
+- [x] Target Tracking policy `cpu-target-tracking` configured at `50%` average CPU
+- [x] Scale-out verified: `2 -> 3 -> 4`
+- [x] Scale-in verified: `4 -> 3 -> 2`
+- [x] Full elasticity cycle verified: `2 -> 3 -> 4 -> 3 -> 2`
+- [x] SSM IAM instance role added through Launch Template v2
+- [x] Rolling Instance Refresh to v2 completed successfully
+- [x] Private ASG instances verified online in Systems Manager
+- [x] RDS DB subnet group `web-db-subnet-group` created across both private subnets
+- [x] Database security group `DB-SG` created
+- [x] `DB-SG` permits MySQL/TCP 3306 only from `App-SG`
+- [x] Private RDS MySQL instance `web-db` created
+- [x] RDS public access disabled
+- [x] EC2-to-RDS TCP/3306 connectivity verified
+- [x] Authenticated MySQL session from private EC2 to RDS verified
+- [x] Database `webapp` created
+- [x] Table `visits` created
+- [x] SQL INSERT and SELECT verified
+- [x] PHP and MySQL extensions installed and verified
+- [x] PHP application successfully reads from and writes to RDS
+- [x] End-to-end path verified: Browser -> ALB -> EC2/PHP -> private RDS
+- [x] Configuration drift discovered when only one backend had `db-test.php`
+- [x] Launch Template v3 created to bootstrap PHP + RDS application consistently
+- [x] Instance Refresh to v3 completed
+- [x] Repeated ALB requests no longer returned intermittent 404 responses
+- [x] Multiple ASG backends verified using one shared RDS visit counter
+- [x] CloudWatch alarm created for `UnHealthyHostCount >= 1`
+- [x] SNS topic `webapp-monitoring-alerts` created and email subscription confirmed
+- [x] Final dashboard UI created and tested on both current backends
+- [x] Launch Template v4 created and set as default with final dashboard bootstrap
+- [ ] Complete and verify Instance Refresh to Launch Template v4
+- [ ] Verify final dashboard through ALB after v4 replacement completes
+- [ ] Final GitHub documentation pass
+- [ ] Final resource cleanup after evidence collection
 
 ## Current Architecture
 
@@ -48,124 +69,144 @@
 Internet
    |
    v
-web-alb (internet-facing)
-   ├── public-subnet-a / us-east-1a
-   └── public-subnet-b / us-east-1b
-   |
-   v
-ALB-SG
+web-alb (public subnets, ALB-SG)
    |
    v
 web-tg
    |
    v
-App-SG
+web-asg (2 baseline, scales to 4)
    |
-   v
-Private application instances
-   ^
-   |
-web-launch-template
-   |
-   +--> future Auto Scaling Group across private-subnet-a + private-subnet-b
+   +--> private-subnet-a / us-east-1a
+   +--> private-subnet-b / us-east-1b
+           |
+           v
+        App-SG
+           |
+           | TCP/3306
+           v
+         DB-SG
+           |
+           v
+     Private RDS MySQL
+           |
+           v
+      webapp.visits
 ```
 
-## Verified End-to-End Result
-
-External HTTP request through the ALB returned:
+Operational support:
 
 ```text
-AWS Traffic Spike Project
-Web server is running successfully.
-Hostname: ip-10-0-16-137.ec2.internal
+CloudWatch -> Target Tracking / ALB health alarm
+SNS -> Email notification
+Systems Manager -> private EC2 administration
 ```
 
-This verified the complete path:
+## Verified Runtime Results
+
+### Elasticity
 
 ```text
-Browser -> web-alb -> web-tg -> App-SG -> private EC2 -> Apache
+2 -> 3 -> 4 -> 3 -> 2
 ```
 
-The initial HTTPS attempt failed because HTTPS/443 is not configured on the ALB yet; repeating the request over the configured HTTP/80 listener succeeded.
+The complete Auto Scaling scale-out and scale-in cycle was observed using controlled CPU load and the configured Target Tracking policy.
 
-## Launch Template Details
+### Database path
 
-`web-launch-template` is the reusable server definition for the next Auto Scaling phase.
+```text
+Private EC2 -> App-SG -> DB-SG:3306 -> RDS MySQL
+```
 
-Configuration:
+TCP reachability, MySQL authentication, database creation, table creation, INSERT, and SELECT were all verified.
 
-- AMI: Amazon Linux 2023 x86_64
-- Instance type: `t3.micro`
-- Key pair: `Web-Key`
-- Security group: `App-SG`
-- Subnet: omitted intentionally
-- User data: automated Apache bootstrap
+### Application integration
 
-Subnet placement is intentionally controlled by the Auto Scaling Group so the same template can launch instances into multiple private subnets/AZs.
+The PHP application now records visits in the shared RDS database and displays the total record count plus the backend hostname. Repeated requests through the ALB reached different EC2 backends while preserving the same shared visit counter.
 
-## User Data Purpose
+## Launch Template Evolution
 
-The bootstrap script automatically:
+- **v1** — Apache web-server bootstrap.
+- **v2** — added `WebServer-SSM-Role` for Systems Manager access.
+- **v3** — added PHP, `php-mysqlnd`, and the RDS-backed web application bootstrap.
+- **v4** — added the final dashboard UI and is currently the default Launch Template version.
 
-1. Updates packages.
-2. Installs Apache (`httpd`).
-3. Enables Apache for future boots.
-4. Starts Apache immediately.
-5. Reads the instance hostname.
-6. Creates `/var/www/html/index.html` with a simple project page and hostname.
+Subnet placement remains intentionally omitted from the Launch Template. The Auto Scaling Group controls placement across the two private subnets/AZs.
 
-This matters because an Auto Scaling Group must be able to launch usable application instances without manual login/configuration. A newly created EC2 instance should become application-ready and eventually pass the target-group health check automatically.
+## Monitoring
+
+Existing Target Tracking alarms manage CPU-based elasticity.
+
+A separate operational alarm was added:
+
+- Metric: `AWS/ApplicationELB` → `UnHealthyHostCount`
+- Statistic: `Maximum`
+- Period: `1 minute`
+- Threshold: `>= 1`
+- Datapoints: `1 out of 1`
+- Missing data: treated as not breaching
+- Notification: `webapp-monitoring-alerts` SNS topic → confirmed email subscription
+
+```text
+Unhealthy target -> CloudWatch alarm -> SNS -> Email
+```
+
+## Production Hardening Notes
+
+The lab intentionally distinguishes implemented features from production recommendations.
+
+- **HTTPS / ACM:** not implemented because no owned domain is available for certificate validation. Production deployments should terminate HTTPS on the ALB and redirect HTTP to HTTPS.
+- **AWS WAF:** recommended in front of the ALB for managed web protections and rate-based controls. Not enabled in this lab to avoid adding unnecessary cost.
+- **Database credentials:** password-based authentication is used for the lab. Production should avoid static credentials in application files or EC2 User Data and should use AWS Secrets Manager and/or IAM Database Authentication with least-privilege IAM roles and a dedicated application DB user.
+- **RDS Multi-AZ:** production target is Multi-AZ. The implemented lab database is Single-AZ because the account Free Plan restricted the available deployment options during creation.
 
 ## Cost Warning
 
-NAT Gateway and Application Load Balancer are active billable resources. Auto Scaling will also create additional EC2/EBS usage once enabled. Cleanup remains mandatory after testing, and actual AWS billing data will be documented rather than estimated as observed fact.
-
-## Documentation Evidence
-
-Screenshots have been captured locally for key networking, EC2, target-group, ALB, end-to-end browser, and Launch Template milestones. Screenshot files are not yet committed to GitHub.
+NAT Gateway, Application Load Balancer, RDS, EC2/EBS, and optional services can generate ongoing charges. Cleanup remains mandatory after final testing and evidence collection.
 
 ## Rules
 
-- One implementation step at a time.
-- Do not move forward until the current step is verified.
+- Verify runtime behavior before marking it complete.
 - GitHub is the source of truth for project state.
-- Sync meaningful completed steps to this repository as soon as they are verified.
-- Record architecture/security/cost decisions and trade-offs.
-- Record actual measurements; never invent performance, recovery, availability, or cost results.
-- Track cleanup after every AWS lab session.
-- Warn before creating resources that generate ongoing cost.
-- Never commit passwords, access keys, account IDs, private keys, secret values, or other credentials.
+- Record actual observations; never invent availability, performance, recovery, or cost results.
+- Never commit passwords, access keys, private keys, or other secret values.
+- Clearly separate **Implemented & Verified** from **Production Recommendation**.
 
 ## Session Log
 
 ### Session 0 — Repository Initialization
-- Repository connected and initialized.
+Repository initialized.
 
 ### Session 1 — AWS Account Guardrails
-- Enabled root MFA.
-- Created `$10` monthly AWS budget and alerts.
-- Created safe daily IAM administrative access.
+Root MFA, budget, alerts, and IAM administrative workflow configured.
 
 ### Session 2 — VPC & Subnets
-- Created `main-vpc` and four subnets across two Availability Zones.
+Custom VPC and four subnets created across two Availability Zones.
 
 ### Session 3 — Routing, NAT & Security
-- Created IGW, route tables, NAT Gateway, `ALB-SG`, and `App-SG`.
+IGW, NAT, route tables, `ALB-SG`, and `App-SG` configured.
 
-### Session 4 — EC2 Bootstrap
-- Corrected first-launch public-IP mistake.
-- Re-launched `web-server` privately and verified status checks.
+### Session 4 — Private EC2 Bootstrap
+Private application server and Apache bootstrap verified.
 
 ### Session 5 — Target Group & ALB
-- Created `web-tg` and internet-facing `web-alb`.
-- Verified ALB `Active`, target `Healthy`, and successful browser response over HTTP.
+`web-tg` and `web-alb` configured and end-to-end HTTP verified.
 
-### Session 6 — Launch Template
-- Created `web-launch-template` version 1.
-- Reused Amazon Linux 2023, `t3.micro`, `Web-Key`, and `App-SG`.
-- Intentionally omitted subnet placement for ASG control.
-- Added automated Apache user data and documented why the Base64 pre-encoded option remains disabled for plain Bash input.
+### Session 6 — Launch Template & Auto Scaling
+Launch Template created, ASG deployed across both private subnets, Target Tracking configured, and full `2 -> 3 -> 4 -> 3 -> 2` elasticity cycle verified.
+
+### Session 7 — Private Operations
+Launch Template v2 added the SSM instance profile; rolling refresh and Session Manager access were verified.
+
+### Session 8 — RDS Data Tier
+Private RDS networking, `DB-SG`, MySQL connectivity, authentication, `webapp`, `visits`, INSERT, and SELECT were verified.
+
+### Session 9 — Web Application Integration
+PHP application integrated with RDS. Configuration drift between backends was discovered and corrected with Launch Template v3 and an Instance Refresh.
+
+### Session 10 — Monitoring & Final UI
+CloudWatch unhealthy-target monitoring plus SNS email notification were configured. A final dashboard UI was created, and Launch Template v4 was prepared for reproducible rollout.
 
 ## Next Verified Step
 
-Create an Auto Scaling Group from `web-launch-template`, place it across `private-subnet-a` and `private-subnet-b`, attach it to `web-tg`, and verify that ASG-created instances bootstrap automatically and become healthy targets.
+Complete the Instance Refresh to Launch Template v4, then verify that repeated ALB requests reach multiple newly replaced backends while the dashboard remains available and the shared RDS visit counter continues increasing.
