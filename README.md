@@ -72,7 +72,7 @@ The public load balancer and private application tier use separate security boun
 
 ### 3. Auto Scaling configuration
 
-![Auto Scaling Group review](12-auto-scaling-group-review.png)
+![Auto Scaling Group review](auto-scaling-group-review.png)
 
 The application tier was managed by an Auto Scaling Group with a baseline of two instances and a maximum of four.
 
