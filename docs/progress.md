@@ -2,7 +2,7 @@
 
 ## Current Status
 
-**Phase 2 — Networking & Compute Preparation (in progress)**
+**Phase 3 — Load Balancing (in progress)**
 
 - [x] Repository created
 - [x] Project README initialized
@@ -17,35 +17,54 @@
 - [x] Private subnet A: `10.0.16.0/21` — `us-east-1a`
 - [x] Private subnet B: `10.0.24.0/21` — `us-east-1b`
 - [x] Internet Gateway created and attached to `main-vpc`
-- [x] Public route table created
-- [x] Public route `0.0.0.0/0 -> Internet Gateway` configured
-- [x] Both public subnets explicitly associated with public route table
-- [x] Private route table created
-- [x] Both private subnets explicitly associated with private route table
-- [x] NAT Gateway created and reached `Available`
-- [x] Private default route `0.0.0.0/0 -> NAT Gateway` configured
-- [x] ALB security group (`alb-sg`) created
-- [x] `alb-sg` inbound HTTP/80 from `0.0.0.0/0`
-- [x] `alb-sg` inbound HTTPS/443 from `0.0.0.0/0`
-- [x] Application security group (`app-sg`) created
-- [x] `app-sg` inbound HTTP/80 restricted to source `alb-sg`
-- [x] First EC2 launch attempt terminated after detecting unintended public IPv4 assignment
-- [x] Replacement EC2 instance launched successfully in `private-subnet-a`
-- [x] Replacement EC2 has no public IPv4 address
-- [x] Replacement EC2 uses `App-SG`
-- [x] Replacement EC2 reached all status checks passed (`3/3` in current console)
-- [ ] Verify Apache bootstrap through an ALB target health check
-- [ ] Create target group and Application Load Balancer
+- [x] Public route table created and public subnets associated
+- [x] Private route table created and private subnets associated
+- [x] NAT Gateway created and private default route configured
+- [x] ALB security group (`ALB-SG`) created
+- [x] Application security group (`App-SG`) created; HTTP/80 allowed from `ALB-SG` only
+- [x] Corrected EC2 public-IP misconfiguration by recreating `web-server` privately
+- [x] `web-server` running in `private-subnet-a` with no public IPv4 and `App-SG`
+- [x] EC2 status checks passed
+- [x] Target group `web-tg` created
+- [x] Target type: Instance, HTTP:80, HTTP1, VPC `main-vpc`
+- [x] Health check: HTTP `/`, traffic port, success code 200
+- [x] `web-server` registered in `web-tg` on port 80
+- [x] Application Load Balancer `web-alb` created
+- [x] `web-alb` is internet-facing and IPv4
+- [x] `web-alb` spans `public-subnet-a` (`us-east-1a`) and `public-subnet-b` (`us-east-1b`)
+- [x] `web-alb` uses `ALB-SG`
+- [x] Listener HTTP:80 forwards 100% to `web-tg`
+- [ ] Wait for ALB state to become `Active`
+- [ ] Verify target health becomes `Healthy`
+- [ ] Test application through ALB DNS name
 
-## Current Network Layout
+## Current Architecture
 
 ```text
 Internet
    │
    ▼
-Internet Gateway
+web-alb (internet-facing)
+   ├── public-subnet-a / us-east-1a
+   └── public-subnet-b / us-east-1b
    │
    ▼
+ALB-SG
+   │ HTTP:80
+   ▼
+web-tg
+   │
+   ▼
+App-SG
+   │ HTTP:80 from ALB-SG only
+   ▼
+web-server
+   └── private-subnet-a / us-east-1a
+```
+
+## Current Network Layout
+
+```text
 main-vpc — 10.0.0.0/16
 │
 ├── us-east-1a
@@ -69,17 +88,17 @@ Private route table:
 ```text
 Internet
    ↓
-alb-sg
+ALB-SG
    ├── TCP/80  from 0.0.0.0/0
    └── TCP/443 from 0.0.0.0/0
    ↓
-app-sg
-   └── TCP/80 from alb-sg only
+App-SG
+   └── TCP/80 from ALB-SG only
    ↓
 private EC2
 ```
 
-This keeps the application instance from accepting direct Internet web traffic. The ALB will be the public entry point.
+This keeps the application instance from accepting direct Internet web traffic. The ALB is the public entry point.
 
 ## EC2 Implementation
 
@@ -93,22 +112,22 @@ Current successful instance configuration:
 - Public IPv4: none
 - Security Group: `App-SG`
 - Key pair: `Web-Key`
-- User data: installs/enables/starts Apache (`httpd`) and writes a simple test page with the instance hostname
+- User data installs/enables/starts Apache (`httpd`) and writes a simple test page with the instance hostname
 - Status checks: passed
 
 ### Learning Incident — Public IP Misconfiguration
 
 The first EC2 launch accidentally received an auto-assigned public IPv4 address even though it was placed in the private application subnet. The instance was terminated and recreated with public IP assignment disabled.
 
-**Lesson:** A subnet being named or routed as "private" is not enough by itself. Public IPv4 assignment must also be disabled for the application instance, and ingress should be restricted with a dedicated application security group.
+**Lesson:** A subnet being named or routed as private is not enough by itself. Public IPv4 assignment must also be disabled for the application instance, and ingress should be restricted with a dedicated application security group.
 
 ## Cost Warning
 
-The NAT Gateway is active and billable. It incurs hourly charges while provisioned plus data-processing charges. It is currently required so the private EC2 instance can bootstrap packages from the Internet. It must be deleted during cleanup when no longer needed.
+The NAT Gateway is active and billable. The Application Load Balancer is also now provisioned and billable. Both must be tracked and deleted during cleanup when the lab no longer needs them. Actual AWS billing data will be used later for cost documentation.
 
 ## Documentation Evidence
 
-AWS Console screenshots have been captured locally for networking steps, NAT routing, security groups, the initial EC2 launch issue, and the corrected private EC2 launch. Screenshot files are not yet committed to GitHub.
+AWS Console screenshots have been captured locally for VPC/subnets, Internet Gateway, route tables, NAT routing, security groups, EC2 correction, target group creation, and ALB creation/provisioning. Screenshot files are not yet committed to GitHub.
 
 ## Rules
 
@@ -141,8 +160,7 @@ AWS Console screenshots have been captured locally for networking steps, NAT rou
 - Created public/private route tables and explicit subnet associations.
 - Routed public Internet traffic through the Internet Gateway.
 - Created a NAT Gateway and routed private outbound traffic through it.
-- Created `alb-sg` for future ALB ingress.
-- Created `app-sg` with HTTP ingress from `alb-sg` only.
+- Created `ALB-SG` and `App-SG` with layered ingress.
 
 ### Session 4 — EC2 Bootstrap
 - Prepared Amazon Linux 2023 Apache user data.
@@ -150,6 +168,13 @@ AWS Console screenshots have been captured locally for networking steps, NAT rou
 - Re-launched `web-server` in `private-subnet-a` with no public IPv4 and `App-SG`.
 - Verified the replacement instance is Running and all status checks passed.
 
+### Session 5 — Target Group & ALB
+- Created `web-tg` using instance targets on HTTP port 80.
+- Registered `web-server` in the target group.
+- Created internet-facing `web-alb` across the two public subnets.
+- Attached `ALB-SG` and configured HTTP:80 listener to forward to `web-tg`.
+- ALB was still `Provisioning` immediately after creation, which is expected.
+
 ## Next Verified Step
 
-Create an HTTP target group for the private EC2 instance, register `web-server`, verify target health, then create the internet-facing Application Load Balancer across both public subnets using `alb-sg`.
+Wait for `web-alb` to become `Active`, then open `web-tg` and verify `web-server` target health. If the target becomes `Healthy`, test the application through the ALB DNS name and capture the result.
