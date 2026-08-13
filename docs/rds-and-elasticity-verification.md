@@ -1,34 +1,6 @@
-# RDS and Elasticity Verification
+# RDS Verification
 
-This document records the latest runtime verification results for the AWS Traffic Spike project.
-
-## Auto Scaling elasticity cycle — Verified
-
-The `web-asg` Target Tracking policy uses Average CPU Utilization with a target of `50%`, minimum capacity `2`, desired baseline `2`, and maximum capacity `4`.
-
-A controlled CPU stress test was run on both baseline `t3.micro` instances through AWS Systems Manager. CloudWatch showed group Average CPU Utilization above the target, including a captured value around `71.68%`.
-
-The Target Tracking high alarm triggered automatic scale-out:
-
-```text
-2 -> 3 -> 4
-```
-
-All four instances eventually became healthy in `web-tg`.
-
-After the synthetic CPU load was stopped, CloudWatch showed CPU utilization falling. The Target Tracking low alarm then triggered automatic scale-in:
-
-```text
-4 -> 3 -> 2
-```
-
-The full elasticity cycle is therefore verified:
-
-```text
-2 -> 3 -> 4 -> 3 -> 2
-```
-
-No manual desired-capacity changes were used to produce the scale-in result.
+This document records the implementation and runtime verification of the private RDS database tier for the AWS Traffic Spike project.
 
 ## Private RDS network design
 
@@ -169,18 +141,9 @@ Write data
 Read data
 ```
 
-## Current verified architecture
+## Current verified database architecture
 
 ```text
-Internet
-   |
-   v
-Application Load Balancer
-   |
-   v
-Target Group
-   |
-   v
 Auto Scaling EC2 tier in private subnets
    |
    v
