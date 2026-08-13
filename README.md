@@ -115,7 +115,7 @@ Final checks also confirmed:
 - `docs/progress.md` — complete implementation/verification checklist and cleanup record
 - `docs/runtime-verification.md` — runtime test evidence
 - `docs/rds-and-elasticity-verification.md` — RDS and Auto Scaling verification details
-- `aws-project-screenshots.zip` — complete screenshot evidence archive
+- `evidence/` — complete project screenshot evidence
 
 ## Key Takeaway
 
@@ -127,6 +127,6 @@ Design -> Build -> Secure -> Scale -> Observe -> Debug -> Verify -> Clean Up
 
 ## Final Result
 
-![Final AWS Traffic Spike Dashboard 1](final-aws-traffic-spike-dashboard-1.png)
+![Final AWS Traffic Spike Dashboard 1](evidence/final-aws-traffic-spike-dashboard-1.png)
 
-![Final AWS Traffic Spike Dashboard 2](final-aws-traffic-spike-dashboard-2.png)
+![Final AWS Traffic Spike Dashboard 2](evidence/final-aws-traffic-spike-dashboard-2.png)
