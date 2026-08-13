@@ -294,7 +294,7 @@ Port 80
 Expected success code: 200
 ```
 
-The registered `web-server` is now reported as:
+The registered `web-server` is reported as:
 
 ```text
 Healthy: 1
@@ -312,11 +312,52 @@ A healthy target is meaningful evidence that several components work together:
 - Apache is listening on port 80.
 - The `/` health-check endpoint returns an accepted HTTP response.
 
-It does **not** by itself prove the complete public user journey. The next verification is an end-to-end browser request through the ALB DNS name.
+---
+
+## 12. End-to-End Browser Validation
+
+The ALB DNS endpoint was opened from an external browser over HTTP.
+
+Observed result:
+
+```text
+AWS Traffic Spike Project
+Web server is running successfully.
+Hostname: ip-10-0-16-137.ec2.internal
+```
+
+### What this proves
+
+This is the first full-path validation from the public Internet to the private application server:
+
+```text
+Browser
+   |
+   | HTTP/80
+   v
+web-alb
+   |
+   v
+web-tg
+   |
+   v
+App-SG
+   |
+   v
+web-server
+```
+
+The successful browser response confirms that the public listener, ALB security group, target-group forwarding, application security-group reference, private EC2 networking, and Apache service all work together as intended.
+
+### Small troubleshooting note
+
+The first browser attempt used HTTPS and returned a connection-refused error. This was expected because the ALB currently has only an HTTP/80 listener and no HTTPS/443 listener/certificate configured yet. Repeating the test with `http://` succeeded.
+
+This distinction is useful: the architecture was functioning correctly; the failed request used a protocol the listener was not configured to accept.
 
 ---
 
-## 12. Current Verified Traffic Flow
+## 13. Verified Traffic Flow
 
 ```text
 1. Client sends HTTP request to the ALB DNS name
@@ -332,13 +373,13 @@ It does **not** by itself prove the complete public user journey. The next verif
 6. App-SG permits HTTP/80 from ALB-SG
                        |
 7. Private web-server/Apache handles request
+                       |
+8. Browser receives the application response successfully
 ```
-
-The browser end-to-end test is intentionally left as the next verification step rather than claiming success before it is observed.
 
 ---
 
-## 13. Evidence Captured During Implementation
+## 14. Evidence Captured During Implementation
 
 Console screenshots have been captured locally for important milestones, including:
 
@@ -350,12 +391,13 @@ Console screenshots have been captured locally for important milestones, includi
 - ALB provisioning
 - ALB `Active` state
 - Target group `Healthy` state
+- Successful browser response through the ALB DNS name
 
 Screenshots should contain no secrets, private keys, passwords, or access credentials before being committed.
 
 ---
 
-## 14. Current State and Next Step
+## 15. Current State and Next Step
 
 ### Verified
 
@@ -369,7 +411,8 @@ Screenshots should contain no secrets, private keys, passwords, or access creden
 - Internet-facing `web-alb`
 - HTTP listener forwarding to `web-tg`
 - Target health: `Healthy`
+- External browser request through ALB: successful
 
-### Next verification
+### Next phase
 
-Open the ALB DNS endpoint from an external browser and verify the Apache test page is returned successfully. Once observed, record that as the first end-to-end application-path validation.
+The networking and first end-to-end application path are now validated. The next engineering phase can move toward application-tier resilience and scaling, such as a launch template / Auto Scaling Group, followed later by database and observability layers according to the project plan.
