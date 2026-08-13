@@ -52,66 +52,6 @@ SNS               -> email notifications
 IAM               -> instance permissions
 ```
 
-## Visual Evidence
-
-The repository keeps the complete screenshot set for implementation evidence. The most useful proof points are surfaced here so the README tells the story without becoming a screenshot dump.
-
-### 1. VPC foundation
-
-![VPC created](1-vpc-created.png)
-
-The project started with a dedicated VPC and a multi-subnet design across Availability Zones.
-
-### 2. Security-group layering
-
-![ALB Security Group](ALB-SG.png)
-
-![Application Security Group](App-SG.png)
-
-The public load balancer and private application tier use separate security boundaries rather than exposing EC2 directly to the Internet.
-
-### 3. Auto Scaling configuration
-
-![Auto Scaling Group review](auto-scaling-group-review.png)
-
-The application tier was managed by an Auto Scaling Group with a baseline of two instances and a maximum of four.
-
-### 4. End-to-end ALB success
-
-![ALB end-to-end success](alb-end-to-end-success.png)
-
-This verified the public request path through the ALB into the private application tier.
-
-### 5. Load balancing across multiple backends
-
-![ALB backend A with RDS success](alb-backend-a-rds-success.png)
-
-![ALB backend B with RDS success](alb-backend-b-rds-success.png)
-
-Successive requests reached different EC2 hostnames, demonstrating that the ALB was distributing traffic across Auto Scaling-managed backends.
-
-### 6. Shared RDS state across backends
-
-![Shared RDS state across ALB backends](alb-multi-backend-shared-rds-state.png)
-
-The visit counter remained shared even when the backend hostname changed, proving that application state was persisted in RDS instead of on individual EC2 instances.
-
-### 7. Full ALB-to-RDS application path
-
-![ALB to RDS end-to-end success](alb-to-rds-end-to-end-success.png)
-
-This validated the complete application flow from browser traffic through the load-balancing and compute tiers to the private MySQL database.
-
-### 8. Load-balancing hostname change after refresh
-
-![Load balancing hostname](alb-load-balancing-hostname.png)
-
-![Load balancing hostname after refresh](alb-load-balancing-hostname-afterRefreash.png)
-
-The backend hostname changed across refreshes while the application remained available.
-
-> The repository also includes the full screenshot evidence set and the archive `aws-project-screenshots.zip` for deeper review.
-
 ## What Was Actually Verified
 
 - Multi-AZ VPC design with public and private subnets
@@ -184,3 +124,9 @@ This project was not just a collection of AWS services. It demonstrated the full
 ```text
 Design -> Build -> Secure -> Scale -> Observe -> Debug -> Verify -> Clean Up
 ```
+
+## Final Result
+
+![Final AWS Traffic Spike Dashboard 1](final-aws-traffic-spike-dashboard-1.png)
+
+![Final AWS Traffic Spike Dashboard 2](final-aws-traffic-spike-dashboard-2.png)
