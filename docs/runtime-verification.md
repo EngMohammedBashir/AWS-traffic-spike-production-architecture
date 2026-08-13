@@ -153,28 +153,27 @@ web-tg health checks pass
 4 healthy application targets
 ```
 
-## 7. Scale-in verification in progress
+## 7. Scale-in verified
 
-After scale-out was proven, the synthetic CPU workload was stopped on both stressed baseline instances.
+After scale-out was proven, the synthetic CPU workload was stopped on the stressed baseline instances.
 
-CloudWatch then showed Average CPU Utilization falling from the elevated test range. The graph visibly declined from roughly the mid-80% range toward the mid-40% range.
+CloudWatch showed Average CPU Utilization falling after the load was removed. Target Tracking then reduced capacity automatically from the maximum back toward the configured minimum.
 
-Expected next behavior:
+Verified scale-in sequence:
 
 ```text
-CPU load removed
-      |
-      v
-Average CPU falls
-      |
-      v
-Target Tracking evaluates lower demand
-      |
-      v
-Expected: 4 -> 3 -> 2
+4 -> 3 -> 2
 ```
 
-**Scale-in is not marked Verified yet.** It will only be marked verified after Auto Scaling Activity confirms the automatic scale-in actions and the group returns to its configured minimum capacity of two healthy targets.
+No manual desired-capacity changes were used to produce the scale-in result.
+
+The complete elasticity cycle is therefore verified:
+
+```text
+2 -> 3 -> 4 -> 3 -> 2
+```
+
+This demonstrates both halves of Target Tracking elasticity: adding capacity when CPU demand exceeds the target and removing excess capacity after demand falls, while respecting the configured minimum and maximum boundaries.
 
 ## Current verification status
 
@@ -193,16 +192,10 @@ Expected: 4 -> 3 -> 2
 - Continued scale-out reached maximum capacity 4
 - All four targets became healthy in `web-tg`
 - Synthetic load removed
-- CPU metric observed decreasing after load removal
-
-### Pending
-
+- CPU metric decreased after load removal
 - Automatic scale-in from 4 to 3
 - Automatic scale-in from 3 to 2
-- Final confirmation of two healthy targets after scale-in
+- Capacity returned to the configured minimum of 2
+- Full elasticity cycle verified: `2 -> 3 -> 4 -> 3 -> 2`
 
-The full elasticity cycle will only be marked complete after the following sequence is observed automatically:
-
-```text
-2 -> 3 -> 4 -> 3 -> 2
-```
+The Auto Scaling runtime verification is complete.
