@@ -1,14 +1,22 @@
-# AWS Traffic Spike Production Architecture
+# MADAR Cloud Transformation — Phase 1
+
+## Resilient AWS Web Architecture for Traffic Spikes
 
 ## Project Status
 
 **Completed and verified.**
 
-This project solves a realistic reliability problem: a web application must survive sudden traffic spikes without exposing its application or database tiers directly to the Internet.
+## Company Context
+
+**MADAR (مدار)** is a fictional growing digital commerce company used as a continuous business case across this cloud engineering journey.
+
+At the beginning of MADAR's cloud transformation, its web application depended on a legacy single-server architecture. As customer traffic grew, this design became a reliability and scaling risk. Phase 1 focuses on rebuilding that web tier into a resilient AWS architecture that can absorb traffic spikes while keeping the application and database tiers isolated from direct Internet access.
+
+This phase establishes the infrastructure foundation that later MADAR projects build on as the company grows and introduces new workloads.
 
 ## Business Problem
 
-A legacy single-server application suffers from:
+MADAR's legacy single-server application suffers from:
 
 - Single point of failure
 - No horizontal scaling
@@ -17,9 +25,14 @@ A legacy single-server application suffers from:
 - Database exposure risk
 - Manual server configuration that does not scale
 
+The immediate engineering goal is therefore not simply to move a server to AWS. It is to redesign the application path so MADAR can scale horizontally, recover unhealthy capacity, protect private tiers, and observe production behavior.
+
 ## Implemented Architecture
 
 ```text
+MADAR Customers
+   |
+   v
 Internet
    |
    v
@@ -73,7 +86,7 @@ IAM               -> instance permissions
 ## Final Application Path
 
 ```text
-Browser
+MADAR Customer
    -> ALB
    -> Auto Scaling EC2
    -> Apache/PHP
@@ -82,11 +95,22 @@ Browser
 
 The dashboard displayed the RDS connection state, total visits, current backend hostname, and last request time. Refreshing the page demonstrated both load balancing and shared database persistence.
 
-## Engineering Lesson: Configuration Drift
+## Incident During Validation: Configuration Drift
 
 During testing, one backend had the new PHP file while another did not. The ALB therefore alternated between a successful response and `404 Not Found` even though both targets were healthy.
 
-The fix was not to keep editing servers manually. The application bootstrap was moved into the Launch Template and the fleet was refreshed so every replacement/scaled instance launched consistently.
+This exposed an operational problem MADAR would face as the fleet scaled: manually configured servers could diverge from one another.
+
+The fix was not to keep editing servers manually. The application bootstrap was moved into the Launch Template and the fleet was refreshed so every replacement or scaled instance launched consistently.
+
+```text
+Traffic growth
+   -> multiple EC2 instances
+   -> configuration inconsistency discovered
+   -> application bootstrap moved to Launch Template
+   -> fleet refreshed
+   -> consistent replacement/scaling behavior
+```
 
 ## Production Hardening Recommendations
 
@@ -109,6 +133,23 @@ Final checks also confirmed:
 - CloudWatch alarms: `0`
 - SNS project topics: `0`
 
+## MADAR Cloud Journey
+
+Phase 1 solves MADAR's first infrastructure problem: **a fragile web application that cannot safely handle growth**.
+
+The result is a scalable and observable web foundation:
+
+```text
+Legacy single server
+   -> resilient AWS network
+   -> load-balanced private compute
+   -> Auto Scaling
+   -> private persistent database
+   -> monitoring and operational alerts
+```
+
+As MADAR continues to grow, not every workload should pass synchronously through this web stack. Later phases extend the company architecture with asynchronous and serverless processing for background jobs and bursty event workloads.
+
 ## Documentation
 
 - `docs/architecture.md` — implemented architecture and technical reasoning
@@ -119,14 +160,14 @@ Final checks also confirmed:
 
 ## Key Takeaway
 
-This project was not just a collection of AWS services. It demonstrated the full engineering loop:
+This phase demonstrated the complete engineering loop around MADAR's first cloud reliability problem:
 
 ```text
-Design -> Build -> Secure -> Scale -> Observe -> Debug -> Verify -> Clean Up
+Business Problem -> Design -> Build -> Secure -> Scale -> Observe -> Debug -> Verify -> Clean Up
 ```
 
 ## Final Result
 
-![Final AWS Traffic Spike Dashboard 1](evidence/final-aws-traffic-spike-dashboard-1.png)
+![Final MADAR AWS Traffic Spike Dashboard 1](evidence/final-aws-traffic-spike-dashboard-1.png)
 
-![Final AWS Traffic Spike Dashboard 2](evidence/final-aws-traffic-spike-dashboard-2.png)
+![Final MADAR AWS Traffic Spike Dashboard 2](evidence/final-aws-traffic-spike-dashboard-2.png)
